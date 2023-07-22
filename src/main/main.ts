@@ -9,11 +9,16 @@
  * `./src/main.js` using webpack. This gives us some performance wins.
  */
 import path from 'path';
-import { app, BrowserWindow, shell, ipcMain } from 'electron';
+import { app, BrowserWindow, shell, ipcMain, webContents } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
+
+const fs = require('fs');
+const xml2js = require('xml2js');
+
+const parser = new xml2js.Parser();
 
 class AppUpdater {
   constructor() {
@@ -25,11 +30,74 @@ class AppUpdater {
 
 let mainWindow: BrowserWindow | null = null;
 
+const LANGUAGE_PATH = app.isPackaged
+  ? path.join(process.resourcesPath, 'languages')
+  : path.join(__dirname, '../../languages');
+
+const getLanguagePath = (...paths: string[]): string => {
+  return path.join(LANGUAGE_PATH, ...paths);
+};
+
 ipcMain.on('ipc-example', async (event, arg) => {
-  const msgTemplate = (pingPong: string) => `IPC test: ${pingPong}`;
-  console.log(msgTemplate(arg));
-  event.reply('ipc-example', msgTemplate('pong'));
+  console.log(event, arg);
+  if (arg == 'save-json') {
+    saveJson(event, arg);
+  }
+
+  if (arg == 'read-json') {
+    readjson(event, arg);
+  }
 });
+
+const readjson = (event, arg) => {
+  const jsonPath = getLanguagePath('test.json');
+  fs.readFile(jsonPath, 'utf-8', (err, fileData) => {
+    if (err) {
+      console.error(err);
+      return;
+    }
+    const jsonData = JSON.parse(fileData);
+    console.log('数据', jsonData);
+    mainWindow.webContents.send('read-json', jsonData);
+  });
+};
+
+const saveJson = (event, arg) => {
+  console.log('转换json文件');
+  const stringPath = getLanguagePath('test.xml');
+  const jsonPath = getLanguagePath('test.json');
+  fs.readFile(stringPath, function (err, data) {
+    parser.parseString(data, function (err, result) {
+      if (err) {
+        console.error(err);
+        return;
+      }
+      const strings = result.resources.string;
+      const jsonStrings = {};
+      const jsonlist = [];
+      for (let i = 0; i < strings.length; i++) {
+        const key = strings[i].$.name;
+        const value = strings[i]._;
+        jsonlist.push({
+          key,
+          value,
+        });
+      }
+      jsonStrings.list = jsonlist;
+      fs.writeFile(
+        jsonPath,
+        JSON.stringify(jsonStrings, null, 2),
+        function (err) {
+          if (err) {
+            console.error(err);
+            return;
+          }
+          console.log(`Conversion done. JSON saved to ${jsonPath}`);
+        }
+      );
+    });
+  });
+};
 
 if (process.env.NODE_ENV === 'production') {
   const sourceMapSupport = require('source-map-support');
